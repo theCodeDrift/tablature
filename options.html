@@ -10,6 +10,8 @@
       #errors { color: #b00; white-space: pre-line; }
       #status { color: #070; }
       code { background: #eee; padding: 0 3px; }
+      h2 { font-size: 15px; margin-top: 1.5rem; }
+      @media (prefers-color-scheme: dark) { body { background: #202124; color: #e8eaed; } code { background: #3c4043; } #errors { color: #f28b82; } #status { color: #81c995; } }
     </style>
   </head>
   <body>
@@ -31,6 +33,14 @@ dev | green | *://github.com/*"></textarea>
       <label><input type="radio" name="scope" value="window" /> within each window</label>
       <label><input type="radio" name="scope" value="global" /> across all windows (tabs move between windows)</label>
     </div>
+
+    <h2>This machine</h2>
+    <p>
+      Tablature shares each named group's tabs with your other computers through Chrome sync, so the
+      toolbar button can offer to open the ones you don't have here. Nothing opens or closes on its own.
+    </p>
+    <div class="row"><label><input type="checkbox" id="shareTabs" /> Share this machine's groups</label></div>
+    <div class="row"><label>Name shown on other machines: <input type="text" id="machineName" maxlength="40" /></label></div>
 
     <div class="row">
       <button id="save">Save</button>

@@ -84,6 +84,10 @@ const RULES = [
   { group: "dev", color: "green", pattern: "*://github.com/*" },
 ];
 
+await check("extension ID is pinned by the manifest key, so sync works across machines", async () => {
+  if (extId !== "efjdfbahfkmmadlabjpogbmecbidgbmo") throw new Error(extId);
+});
+
 // 1. Tabs open before rules exist get sorted when rules are saved.
 await open("https://github.com/a");
 await open("https://bsky.app/b"); // *://*.bsky.app/* needs a subdomain, so this stays out
@@ -211,7 +215,97 @@ await check("options page loads, saves rules, shows parse errors", async () => {
   await page.close();
 });
 
-// 7. Scopes across windows.
+// 7. Sharing groups between machines.
+const mid = async () => (await ev(() => chrome.storage.local.get("machineId"))).machineId;
+const syncAll = () => ev(() => chrome.storage.sync.get(null));
+
+await check("this machine's named groups are written to sync storage", async () => {
+  await until("snapshot written", async () => {
+    const id = await mid();
+    const all = await syncAll();
+    const social = all[`g:${id}:social`];
+    return id && all[`m:${id}`] && social?.tabs.some((t) => t.u === "https://x.com/home") ? true : Object.keys(all);
+  }, 25000);
+});
+
+await check("a closed tab drops out of the synced snapshot", async () => {
+  const id = await open("https://news.test/solo");
+  await until("news group", async () => ((await groupOf("news.test/solo")) === "news" ? true : await allTabs()));
+  await ev(() => chrome.runtime.sendMessage({ type: "snapshotNow" }).catch(() => null));
+  await ev(async (id) => { await chrome.tabs.remove(id); }, id);
+  const m = await mid();
+  // Other news tabs may exist; only check that a removed URL leaves the snapshot.
+  await until("solo gone", async () => {
+    const v = (await syncAll())[`g:${m}:news`];
+    return !v || !v.tabs.some((t) => t.u.includes("news.test/solo")) ? true : v;
+  }, 25000);
+});
+
+const NOW = Date.now();
+const LAPTOP_TABS = [
+  { u: "https://reading.test/1", t: "Long read one" },
+  { u: "https://reading.test/2", t: "Long read two" },
+  { u: "https://x.com/home", t: "Already open here" },
+];
+await check("popup lists another machine's tabs that aren't open here", async () => {
+  await setSync({
+    "m:laptop01": { name: "Laptop", at: NOW - 5 * 60000 },
+    "g:laptop01:reading": { title: "Reading", color: "purple", tabs: LAPTOP_TABS, more: 0, at: NOW },
+    "m:gone0001": { name: "Old desktop", at: NOW - 45 * 86400000 },
+    "g:gone0001:x": { title: "x", color: "grey", tabs: [{ u: "https://gone.test/", t: "" }], more: 0, at: 0 },
+  });
+  const page = await ctx.newPage();
+  await page.setViewportSize({ width: 360, height: 420 });
+  await page.goto(`chrome-extension://${extId}/popup.html`);
+  await page.waitForSelector(".machine");
+  const text = await page.textContent("#machines");
+  for (const want of ["Laptop", "Reading", "2 of 3 not open here", "Open 2"]) {
+    if (!text.includes(want)) throw new Error(`missing "${want}" in: ${text}`);
+  }
+  if (text.includes("Old desktop")) throw new Error("stale machine shown");
+  if (process.env.SCREENSHOTS) {
+    await page.click(".group summary .name");
+    await page.screenshot({ path: path.join(process.env.SCREENSHOTS, "popup.png") });
+  }
+  await page.close();
+});
+
+await check("'Open' brings them into a same-name group here, not marked as manual moves", async () => {
+  const page = await ctx.newPage();
+  await page.goto(`chrome-extension://${extId}/popup.html`);
+  await page.click("button.open");
+  await until("reading group", async () =>
+    (await groupOf("reading.test/1")) === "Reading" && (await groupOf("reading.test/2")) === "Reading" ? true : await allTabs(),
+  );
+  await page.waitForFunction(() => document.body.textContent.includes("Everything in its groups is open here."));
+  const color = await ev(async () => (await chrome.tabGroups.query({ title: "Reading" }))[0]?.color);
+  if (color !== "purple") throw new Error("color " + color);
+  const ids = (await allTabs()).filter((t) => t.url.includes("reading.test")).map((t) => t.id);
+  const { overrides = [] } = await ev(() => chrome.storage.session.get("overrides"));
+  if (ids.some((id) => overrides.includes(id))) throw new Error("restored tabs flagged as manual moves");
+  await page.close();
+});
+
+await check("machines unseen for 30 days are pruned", async () => {
+  await ev(() => chrome.runtime.sendMessage({ type: "snapshotNow" }).catch(() => null));
+  await until("pruned", async () => {
+    const all = await syncAll();
+    return !("m:gone0001" in all) && !("g:gone0001:x" in all) && "m:laptop01" in all ? true : Object.keys(all);
+  }, 25000);
+});
+
+await check("turning sharing off removes this machine from sync storage", async () => {
+  const m = await mid();
+  await ev(() => chrome.storage.local.set({ shareTabs: false }));
+  await until("own keys gone", async () => {
+    const keys = Object.keys(await syncAll());
+    return keys.every((k) => !k.includes(m)) ? true : keys;
+  }, 25000);
+  await ev(() => chrome.storage.local.set({ shareTabs: true }));
+  await until("own keys back", async () => (`m:${m}` in (await syncAll()) ? true : false), 25000);
+});
+
+// 8. Scopes across windows.
 await check("window scope: same name in two windows stays two groups", async () => {
   await setSync({ scope: "window" });
   await ev(async () => (await chrome.windows.create({ url: "https://news.test/w2" })).id);
@@ -230,7 +324,7 @@ await check("disabled: new tabs left alone", async () => {
   if (g !== null) throw new Error("grouped " + g);
 });
 
-// 8. Service worker restart: logic still works after the worker is stopped.
+// 9. Service worker restart: logic still works after the worker is stopped.
 await check("works after service worker restart", async () => {
   await setSync({ enabled: true });
   const page = await ctx.newPage();

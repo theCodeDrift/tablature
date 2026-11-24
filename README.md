@@ -10,6 +10,16 @@ Tablature is a Chrome extension that puts tabs into groups by URL rule and treat
 - **Groups at the front.** Ruled groups sit right after pinned tabs, in the order they first appear in the rules.
 - **More events.** New tabs, URL changes (including single-page-app navigation), tabs dragged between windows, prerender tab swaps, new windows, and groups that get their title late after a session restore.
 - **Manual moves stick.** Drag a tab out of a group by hand and the extension leaves that tab alone until it closes. "Forget manual moves" on the options page resets that.
+- **Groups across machines.** Each machine shares a snapshot of its named groups (up to 50 tabs each) through Chrome sync. The toolbar button lists, per machine, the tabs in each group that aren't open here, with **Open** to bring them into the same-name group in this window. Nothing opens or closes on its own, and closing a tab on one machine never closes it on another. Machines unseen for 30 days are dropped. Turn sharing off or rename the machine on the options page.
+
+### How sharing is stored
+
+Each machine writes only its own keys, so machines never overwrite each other:
+
+- `m:<machineId>`: `{ name, at }`
+- `g:<machineId>:<group name>`: `{ title, color, tabs: [{ u, t }], more, at }`
+
+Chrome sync allows about 100 KB in total and 8 KB per item, so each group is trimmed to fit (`more` counts what was left out), and the per-group cap drops when many machines and groups share the space. Snapshots are written a few seconds after a change and at most every 15 seconds.
 
 ## Set Chrome up so it stops making copies
 
@@ -21,9 +31,20 @@ Chrome saves and pins every new group by itself, and an extension can't see or d
 
 ## Install (unpacked)
 
-1. `chrome://extensions`, turn on Developer mode.
-2. Load unpacked, pick this folder.
-3. Click the toolbar icon to edit rules.
+1. Download `tablature-<version>.zip` from the [releases](https://github.com/theCodeDrift/tablature/releases) and unzip it, or use a checkout of this repo.
+2. Open `chrome://extensions` and turn on Developer mode.
+3. Click **Load unpacked** and pick the unzipped folder.
+4. Pin Tablature to the toolbar. Its popup shows other machines' groups; **Settings** there opens the rules.
+
+The manifest carries a `key`, so the extension ID is `efjdfbahfkmmadlabjpogbmecbidgbmo` wherever it is loaded from. Chrome sync storage is per extension ID, so this is what lets two machines share rules and groups. To test sharing, install it on two computers signed into the same Chrome profile with sync on.
+
+To update, unzip the new version over the old folder and click the reload icon on `chrome://extensions`. Settings and rules are kept.
+
+## Release
+
+```
+npm run package   # dist/tablature-<version>.zip, needs python3
+```
 
 ## Test
 
@@ -43,5 +64,4 @@ Loads the extension unpacked in Playwright's Chromium and checks the `chrome.*` 
 
 ## Not yet
 
-- Syncing the tabs inside a group between machines. Today, names sync and each machine builds its own "social". Next step: keep each group's URL list in synced storage and offer "restore the rest of this group" on demand.
 - Importing rules from Tab Auto Group.
