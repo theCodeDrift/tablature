@@ -1,6 +1,6 @@
-# One Group Per Name
+# Tablature
 
-A Chrome extension that puts tabs into groups by URL rule and treats a group's name as its identity: there is one "social" group, never seven.
+Tablature is a Chrome extension that puts tabs into groups by URL rule and treats a group's name as its identity: there is one "social" group, never seven.
 
 ## What it does
 
@@ -31,7 +31,15 @@ Chrome saves and pins every new group by itself, and an extension can't see or d
 node --test
 ```
 
-Covers the pure logic in `lib.js` (matching, rule parsing, merge and order planning). The `chrome.*` side needs a real browser.
+Covers the pure logic in `lib.js` (matching, rule parsing, merge and order planning).
+
+```
+npm install
+npx playwright install chromium   # once
+npm run test:browser
+```
+
+Loads the extension unpacked in Playwright's Chromium and checks the `chrome.*` side: sorting already-open tabs on rule change, new tabs, navigation (including single-page-app `pushState`), same-name merges, group order after pinned tabs, manual moves sticking and "Forget manual moves", the options page, window vs. global scope, the enabled switch, and a service worker restart. Every http(s) request is answered locally, so it needs no network. Set `CHROME=/path/to/chrome` to use another Chromium build.
 
 ## Not yet
 

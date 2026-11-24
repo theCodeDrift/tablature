@@ -25,7 +25,7 @@ function schedule(tabId) {
   else if (typeof tabId === "number") pending.tabs.add(tabId);
   clearTimeout(timer);
   timer = setTimeout(() => {
-    chain = chain.then(flush).catch((e) => console.warn("[tab-groups]", e));
+    chain = chain.then(flush).catch((e) => console.warn("[tablature]", e));
   }, 300);
 }
 
@@ -83,11 +83,26 @@ async function getOverrides() {
   return new Set(overrides);
 }
 
-async function setOverride(tabId, on) {
-  const set = await getOverrides();
-  if (on) set.add(tabId);
-  else set.delete(tabId);
-  await chrome.storage.session.set({ overrides: [...set] });
+// Every change is a read-modify-write, so they run one at a time. Otherwise a
+// tab closing while "Forget manual moves" runs writes the old list back.
+let overrideQueue = Promise.resolve();
+
+function updateOverrides(change) {
+  const run = overrideQueue.then(async () => {
+    const set = await getOverrides();
+    if (change(set) === false) return;
+    await chrome.storage.session.set({ overrides: [...set] });
+  });
+  overrideQueue = run.catch((e) => console.warn("[tablature]", e));
+  return run;
+}
+
+function setOverride(tabId, on) {
+  return updateOverrides((set) => {
+    if (set.has(tabId) === on) return false; // nothing to write
+    if (on) set.add(tabId);
+    else set.delete(tabId);
+  });
 }
 
 async function noteGroupChange(tabId) {
@@ -209,7 +224,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
     schedule("all");
     reply({ ok: true });
   } else if (msg?.type === "clearOverrides") {
-    chrome.storage.session.set({ overrides: [] }).then(() => {
+    updateOverrides((set) => set.clear()).then(() => {
       schedule("all");
       reply({ ok: true });
     });
