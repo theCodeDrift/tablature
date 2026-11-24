@@ -4,9 +4,12 @@
   "type": "module",
   "scripts": {
     "test": "node --test",
-    "test:browser": "node e2e/browser.mjs"
+    "test:browser": "node e2e/browser.mjs",
+    "package": "node scripts/package.mjs",
+    "icons": "node scripts/icons.mjs"
   },
   "devDependencies": {
     "playwright": "1.57.0"
-  }
+  },
+  "version": "0.2.0"
 }

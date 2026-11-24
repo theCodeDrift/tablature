@@ -14,6 +14,11 @@ async function load() {
   $("enabled").checked = s.enabled;
   $("groupsToTop").checked = s.groupsToTop;
   document.querySelector(`input[name=scope][value=${s.scope}]`).checked = true;
+
+  const local = await chrome.storage.local.get(["machineId", "machineName", "shareTabs"]);
+  $("shareTabs").checked = local.shareTabs ?? true;
+  const meta = local.machineId ? (await chrome.storage.sync.get(`m:${local.machineId}`))[`m:${local.machineId}`] : null;
+  $("machineName").value = local.machineName ?? meta?.name ?? "";
 }
 
 $("save").addEventListener("click", async () => {
@@ -26,6 +31,10 @@ $("save").addEventListener("click", async () => {
     groupsToTop: $("groupsToTop").checked,
     scope: document.querySelector("input[name=scope]:checked").value,
   });
+  const machineName = $("machineName").value.trim();
+  await chrome.storage.local.set({ shareTabs: $("shareTabs").checked });
+  if (machineName) await chrome.storage.local.set({ machineName });
+  else await chrome.storage.local.remove("machineName");
   flash("Saved");
 });
 

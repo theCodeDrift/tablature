@@ -1,4 +1,5 @@
-import { groupOrder, matchRule, normTitle, planMerges, planOrder } from "./lib.js";
+import { groupOrder, isGroupable, matchRule, normTitle, planMerges, planOrder } from "./lib.js";
+import { buildItems, collectGroups, groupPrefix, itemBytes, machineKey, planWrite, readMachines } from "./sync.js";
 
 const DEFAULTS = {
   rules: [],
@@ -21,6 +22,7 @@ let timer = null;
 let chain = Promise.resolve();
 
 function schedule(tabId) {
+  scheduleSnapshot();
   if (tabId === "all") pending.all = true;
   else if (typeof tabId === "number") pending.tabs.add(tabId);
   clearTimeout(timer);
@@ -188,6 +190,92 @@ async function orderGroups(s) {
 }
 
 // ---------------------------------------------------------------------------
+// Sharing groups between machines. Each machine keeps its own snapshot of its
+// named groups in chrome.storage.sync (see sync.js); the popup offers to open
+// what other machines have and this one doesn't. Nothing opens or closes on
+// its own.
+
+const SNAP_DEBOUNCE = 3000;
+const SNAP_MIN_INTERVAL = 15000; // sync allows ~120 writes a minute; stay far under
+const RESTORE_GRACE = 20000; // let a session restore settle before snapshotting
+
+let snapTimer = null;
+let lastSnapAt = 0;
+let snapChain = Promise.resolve();
+
+async function getMachine() {
+  let { machineId, machineName, shareTabs = true } = await chrome.storage.local.get(["machineId", "machineName", "shareTabs"]);
+  if (!machineId) {
+    machineId = crypto.randomUUID().slice(0, 8);
+    await chrome.storage.local.set({ machineId });
+  }
+  if (!machineName) {
+    const { os } = await chrome.runtime.getPlatformInfo();
+    const label = { mac: "Mac", win: "Windows", linux: "Linux", cros: "ChromeOS", android: "Android" }[os] ?? os;
+    machineName = `${label} ${machineId.slice(0, 4)}`;
+  }
+  return { machineId, machineName, shareTabs };
+}
+
+function scheduleSnapshot(delay = SNAP_DEBOUNCE) {
+  clearTimeout(snapTimer);
+  const wait = Math.max(delay, lastSnapAt + SNAP_MIN_INTERVAL - Date.now());
+  snapTimer = setTimeout(() => {
+    snapChain = snapChain.then(snapshot).catch((e) => console.warn("[tablature] snapshot", e));
+  }, wait);
+}
+
+async function snapshot() {
+  const { startedAt = 0 } = await chrome.storage.session.get("startedAt");
+  const sinceStart = Date.now() - startedAt;
+  if (sinceStart < RESTORE_GRACE) return scheduleSnapshot(RESTORE_GRACE - sinceStart);
+
+  const { machineId, machineName, shareTabs } = await getMachine();
+  const all = await chrome.storage.sync.get(null);
+  const now = Date.now();
+  const { stale } = readMachines(all, machineId, now);
+
+  const mine = Object.keys(all).filter((k) => k === machineKey(machineId) || k.startsWith(groupPrefix(machineId)));
+  if (!shareTabs) {
+    if (mine.length || stale.length) await chrome.storage.sync.remove([...mine, ...stale]);
+    lastSnapAt = Date.now();
+    return;
+  }
+
+  const [tabs, groups] = await Promise.all([chrome.tabs.query({}), chrome.tabGroups.query({})]);
+  const othersBytes = Object.entries(all)
+    .filter(([k]) => !mine.includes(k) && !stale.includes(k))
+    .reduce((n, [k, v]) => n + itemBytes(k, v), 0);
+  const next = buildItems(machineId, machineName, collectGroups(tabs, groups), now, othersBytes);
+  const { set, remove } = planWrite(machineId, all, next, now);
+
+  if (remove.length || stale.length) await chrome.storage.sync.remove([...remove, ...stale]);
+  if (set) await chrome.storage.sync.set(set);
+  lastSnapAt = Date.now();
+}
+
+// Opens another machine's tabs here, into the same-name group in this window.
+async function restore({ urls, title, color, windowId }) {
+  const win = windowId ?? (await chrome.windows.getLastFocused({ windowTypes: ["normal"] })).id;
+  const created = [];
+  for (const url of urls.filter(isGroupable)) created.push(await chrome.tabs.create({ url, windowId: win, active: false }));
+  const ids = created.map((t) => t.id);
+  if (!ids.length) return 0;
+  const existing = (await chrome.tabGroups.query({ windowId: win })).find((g) => normTitle(g.title) === normTitle(title));
+  if (existing) {
+    await groupTabs(ids, existing.id);
+  } else {
+    const id = await groupTabs(ids, undefined, win);
+    await retry(() => chrome.tabGroups.update(id, { title, ...(color ? { color } : {}) }));
+  }
+  return ids.length;
+}
+
+// Settings live in sync storage next to every machine's snapshots. Only a
+// settings change should re-sort everything.
+const SNAPSHOT_KEY = /^[mg]:/;
+
+// ---------------------------------------------------------------------------
 // Events. The original extension only looked at a tab once, when it was
 // created; these cover everything that can change where a tab belongs.
 
@@ -200,10 +288,14 @@ chrome.runtime.onStartup.addListener(async () => {
 chrome.tabs.onCreated.addListener((tab) => schedule(tab.id));
 chrome.tabs.onUpdated.addListener((tabId, info) => {
   if (info.url || info.pinned === false) schedule(tabId); // also fires for SPA pushState
-  if ("groupId" in info) noteGroupChange(tabId);
+  if ("groupId" in info) {
+    noteGroupChange(tabId);
+    scheduleSnapshot();
+  }
 });
 chrome.tabs.onAttached.addListener((tabId) => schedule(tabId)); // dragged to another window
 chrome.tabs.onRemoved.addListener((tabId) => {
+  scheduleSnapshot();
   ourMoves.delete(tabId);
   setOverride(tabId, false);
 });
@@ -213,16 +305,30 @@ chrome.tabGroups.onCreated.addListener(() => schedule());
 chrome.tabGroups.onUpdated.addListener(() => schedule()); // restored groups get their title late
 chrome.windows.onCreated.addListener(() => schedule("all"));
 
-chrome.storage.onChanged.addListener((_changes, area) => {
-  if (area === "sync") schedule("all");
-});
+chrome.tabGroups.onRemoved.addListener(() => scheduleSnapshot());
 
-chrome.action.onClicked.addListener(() => chrome.runtime.openOptionsPage());
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "sync" && Object.keys(changes).some((k) => !SNAPSHOT_KEY.test(k))) schedule("all");
+  if (area === "local" && ("shareTabs" in changes || "machineName" in changes)) scheduleSnapshot(0);
+});
 
 chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
   if (msg?.type === "sweep") {
     schedule("all");
     reply({ ok: true });
+  } else if (msg?.type === "restore") {
+    restore(msg).then(
+      (n) => reply({ ok: true, opened: n }),
+      (e) => reply({ ok: false, error: String(e?.message ?? e) }),
+    );
+    return true;
+  } else if (msg?.type === "snapshotNow") {
+    lastSnapAt = 0;
+    snapChain = snapChain.then(snapshot).then(
+      () => reply({ ok: true }),
+      (e) => reply({ ok: false, error: String(e?.message ?? e) }),
+    );
+    return true;
   } else if (msg?.type === "clearOverrides") {
     updateOverrides((set) => set.clear()).then(() => {
       schedule("all");
