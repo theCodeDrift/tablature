@@ -1,11 +1,11 @@
 {
   "manifest_version": 3,
-  "name": "One Group Per Name",
+  "name": "Tablature",
   "version": "0.1.0",
   "description": "Sorts tabs into groups by URL rules, keeps one group per name, and keeps those groups at the front.",
   "minimum_chrome_version": "102",
   "permissions": ["tabs", "tabGroups", "storage"],
   "background": { "service_worker": "background.js", "type": "module" },
-  "action": { "default_title": "One Group Per Name: rules" },
+  "action": { "default_title": "Tablature: rules" },
   "options_page": "options.html"
 }
