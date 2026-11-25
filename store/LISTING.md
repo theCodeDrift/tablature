@@ -43,8 +43,8 @@ Chrome saves and syncs tab groups by itself, which can bring back copies of grou
 - Marquee promo tile: optional, not provided
 
 **Official URL:** none (needs a verified site in Search Console)
-**Homepage URL:** the GitHub repo, if public
-**Support URL:** `https://github.com/theCodeDrift/tablature/issues`, if public
+**Homepage URL:** https://github.com/theCodeDrift/tablature
+**Support URL:** https://github.com/theCodeDrift/tablature/issues
 
 ## Privacy practices tab
 
@@ -68,7 +68,7 @@ Tablature organizes the browser's tabs into named tab groups according to URL ru
 - I do not use or transfer user data for purposes that are unrelated to my item's single purpose
 - I do not use or transfer user data to determine creditworthiness or for lending purposes
 
-**Privacy policy URL:** wherever `store/PRIVACY.md` is published (see the submission steps in the README).
+**Privacy policy URL:** https://github.com/theCodeDrift/tablature/blob/main/store/PRIVACY.md
 
 ## Distribution tab
 

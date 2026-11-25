@@ -63,7 +63,7 @@ The store build leaves out the manifest's `key`, because the store refuses it an
 First submission:
 
 1. Register at the [developer dashboard](https://chrome.google.com/webstore/devconsole) (one-time US$5 fee, 2-step verification required).
-2. Publish `store/PRIVACY.md` somewhere public and note its URL.
+2. Privacy policy URL: https://github.com/theCodeDrift/tablature/blob/main/store/PRIVACY.md
 3. **Add new item** and upload `dist/tablature-<version>-store.zip`.
 4. Fill in the Store listing, Privacy practices, Distribution and Test instructions tabs from `store/LISTING.md`.
 5. Submit for review. Review usually takes a few days.
@@ -89,3 +89,7 @@ Loads the extension unpacked in Playwright's Chromium and drives it: sorting alr
 ## Not yet
 
 - Importing rules from Tab Auto Group.
+
+## License
+
+Copyright 2026 Jakob Heuser. Licensed under the [Apache License, Version 2.0](LICENSE).
