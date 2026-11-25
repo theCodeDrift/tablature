@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Tablature",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAgUE6h76+BQzB1MrBuQ9zbPdcVyRycjrc8x8PnEZl56oVt/Gcq888Hsq+R1cmZyfkokoemEP80uOWXzf1iisyifGFVlCnpbiyRHSGVqzyjZPQSt2PCJZUxwlJ6mqKD8FTWSsTL8Axpkhty4MGD6RfulUlacOli18R0azMwyNOHV8YAT2g6dTXW9KdCeTv3SVi/8bjKYJ0Vpx1MUJMZ2dHPxW4o1KqY38vXxKi7oGnUpUr3JZ0Ey6G33mS+H7yVm3WdAmc8khG22zBE2zO7X32BB6nYD0TcW5yOKsNjRk5t8XiiYtqqYWtgrmRBJDyMV/Xn+bUO/fgjQ79UIqxKUPmcQIDAQAB",
   "description": "Sorts tabs into named groups by URL rule, keeps one group per name, and lets you open a group's tabs from your other computers.",
   "minimum_chrome_version": "102",

@@ -47,8 +47,28 @@ To update, unzip the new version over the old folder and click the reload icon o
 ## Release
 
 ```
-npm run package   # dist/tablature-<version>.zip, needs python3
+npm run package         # dist/tablature-<version>.zip for unpacked installs, needs python3
+npm run package:store   # dist/tablature-<version>-store.zip for the Chrome Web Store
+npm run store:assets    # store/ screenshots and promo tile, from the real extension
 ```
+
+Bump `version` in both `manifest.json` and `package.json` first; the store refuses a version it has already seen.
+
+### Chrome Web Store
+
+The listing text, permission justifications and privacy answers are in [`store/LISTING.md`](store/LISTING.md), the privacy policy in [`store/PRIVACY.md`](store/PRIVACY.md), and the images in `store/`.
+
+The store build leaves out the manifest's `key`, because the store refuses it and assigns its own ID. A store install therefore has a different extension ID from an unpacked one, and they don't share settings or groups through sync. Use the same kind of install on every machine.
+
+First submission:
+
+1. Register at the [developer dashboard](https://chrome.google.com/webstore/devconsole) (one-time US$5 fee, 2-step verification required).
+2. Publish `store/PRIVACY.md` somewhere public and note its URL.
+3. **Add new item** and upload `dist/tablature-<version>-store.zip`.
+4. Fill in the Store listing, Privacy practices, Distribution and Test instructions tabs from `store/LISTING.md`.
+5. Submit for review. Review usually takes a few days.
+
+Updates: bump the version, `npm run package:store`, upload on the item's **Package** tab, submit.
 
 ## Test
 
