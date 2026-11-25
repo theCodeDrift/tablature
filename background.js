@@ -1,4 +1,4 @@
-import { groupOrder, isGroupable, matchRule, normTitle, planMerges, planOrder } from "./lib.js";
+import { groupOrder, isGroupable, matchRule, normTitle, placement, planMerges, planOrder } from "./lib.js";
 import { buildItems, collectGroups, groupPrefix, itemBytes, machineKey, planWrite, readMachines } from "./sync.js";
 
 import { isSettingsKey, loadSettings } from "./settings.js";
@@ -76,6 +76,12 @@ async function groupTabs(tabIds, groupId, windowId) {
   return retry(() => chrome.tabs.group(opts));
 }
 
+async function ungroupTabs(tabIds) {
+  const now = Date.now();
+  for (const id of tabIds) ourMoves.set(id, now);
+  return retry(() => chrome.tabs.ungroup(tabIds));
+}
+
 // ---------------------------------------------------------------------------
 // Manual overrides: a tab the user moved by hand stays where they put it.
 // Kept in session storage, so they reset when Chrome restarts.
@@ -123,17 +129,20 @@ async function noteGroupChange(tabId) {
 
 async function placeTab(tab, s, overrides) {
   if (tab.pinned || overrides.has(tab.id)) return;
-  const rule = matchRule(s.live, tab.url || tab.pendingUrl);
-  if (!rule) return;
-  const want = normTitle(rule.group);
-
+  let currentTitle = null;
   if (tab.groupId !== -1) {
     const current = await chrome.tabGroups.get(tab.groupId).catch(() => null);
     if (!current) return;
-    // Untitled group: most likely mid-restore and the title hasn't arrived.
-    if (!normTitle(current.title)) return;
-    if (normTitle(current.title) === want) return;
+    currentTitle = current.title ?? "";
   }
+  const rule = placement(s.live, s.groups, tab.url || tab.pendingUrl, currentTitle);
+  if (!rule) return;
+  if (rule === "ungroup") {
+    // Left the pages its group is for. An emptied group disappears on its own.
+    await ungroupTabs([tab.id]);
+    return;
+  }
+  const want = normTitle(rule.group);
 
   const query = s.scope === "global" ? {} : { windowId: tab.windowId };
   const matches = (await chrome.tabGroups.query(query)).filter((g) => normTitle(g.title) === want);
@@ -261,6 +270,11 @@ async function restore({ urls, title, color, windowId }) {
   for (const url of urls.filter(isGroupable)) created.push(await chrome.tabs.create({ url, windowId: win, active: false }));
   const ids = created.map((t) => t.id);
   if (!ids.length) return 0;
+  // A tab put in this group by hand on the other machine would be taken
+  // straight back out of it here; treat it as the manual move it was there.
+  const s = await getSettings();
+  const handPlaced = created.filter((t) => placement(s.live, s.groups, t.url || t.pendingUrl, title) === "ungroup");
+  if (handPlaced.length) await updateOverrides((set) => handPlaced.forEach((t) => set.add(t.id)));
   const existing = (await chrome.tabGroups.query({ windowId: win })).find((g) => normTitle(g.title) === normTitle(title));
   if (existing) {
     await groupTabs(ids, existing.id);

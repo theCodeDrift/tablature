@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   checkPattern, compilePattern, groupOrder, matchRule, matchTarget, migrateLegacy, packList,
-  planMerges, planOrder, resolveRules, staleChunks, unpackList,
+  placement, planMerges, planOrder, resolveRules, staleChunks, unpackList,
 } from "./lib.js";
 
 const m = (pattern, url, subpages = false) => compilePattern(pattern, subpages).test(matchTarget(url));
@@ -130,4 +130,27 @@ test("planOrder puts ruled groups first in rule order", () => {
   assert.deepEqual(planOrder(strip, rank), [8, 9]);
   const sorted = [{ groupId: 8, title: "social" }, { groupId: 9, title: "dev" }, { groupId: -1 }];
   assert.equal(planOrder(sorted, rank), null);
+});
+
+test("placement: a tab that leaves its group's pages is taken out of the group", () => {
+  const groups = [{ id: "g1", name: "dev", color: "green" }, { id: "g2", name: "social", color: "blue" }];
+  const live = resolveRules(groups, [
+    { id: "r1", pattern: "github.com/jakobo", group: "g1", subpages: true, enabled: true },
+    { id: "r2", pattern: "x.com", group: "g2", subpages: true, enabled: true },
+  ]);
+  // Ungrouped: goes where the rule says, or nowhere.
+  assert.equal(placement(live, groups, "https://github.com/jakobo/tablature", null).group, "dev");
+  assert.equal(placement(live, groups, "https://example.com/", null), null);
+  // Already in the right group (case and space ignored).
+  assert.equal(placement(live, groups, "https://github.com/jakobo", " Dev "), null);
+  // Matches a different group: moves.
+  assert.equal(placement(live, groups, "https://x.com/home", "dev").group, "social");
+  // Navigated to another repo: no rule matches, so out of the managed group.
+  assert.equal(placement(live, groups, "https://github.com/someoneelse/repo", "dev"), "ungroup");
+  // Groups not in the list were made by hand: left alone.
+  assert.equal(placement(live, groups, "https://github.com/someoneelse/repo", "Reading"), null);
+  // Untitled (mid-restore) and non-web pages: left alone.
+  assert.equal(placement(live, groups, "https://github.com/someoneelse/repo", ""), null);
+  assert.equal(placement(live, groups, "chrome://newtab/", "dev"), null);
+  assert.equal(placement(live, groups, undefined, "dev"), null);
 });

@@ -168,6 +168,18 @@ await check("SPA pushState navigation regroups", async () => {
   await until("docs group", async () => ((await groupOf("example.org/docs/x")) === "docs" ? true : await allTabs()));
 });
 
+await check("navigating a grouped tab off its rule takes it out of the group", async () => {
+  const id = (await allTabs()).find((t) => t.url?.includes("github.com/nav")).id;
+  await ev((id) => chrome.tabs.update(id, { url: "https://elsewhere.test/left" }), id);
+  await until("left dev", async () => ((await allTabs()).find((t) => t.id === id)?.g === null ? true : await allTabs()));
+  if ((await groupOf("github.com/a")) !== "dev") throw new Error("the rest of dev was disturbed");
+  const { overrides = [] } = await ev(() => chrome.storage.session.get("overrides"));
+  if (overrides.includes(id)) throw new Error("our own ungroup was recorded as a manual move");
+  // Back onto a matching page: it rejoins.
+  await ev((id) => chrome.tabs.update(id, { url: "https://github.com/nav" }), id);
+  await until("nav→dev again", async () => ((await groupOf("github.com/nav")) === "dev" ? true : await allTabs()));
+});
+
 // 3. Duplicate same-name groups merge.
 await check("same-name groups merge (case/space-insensitive)", async () => {
   const a = await open("https://example.net/1");
@@ -476,7 +488,49 @@ await check("disabled: new tabs left alone", async () => {
   if (g !== null) throw new Error("grouped " + g);
 });
 
-// 9. Service worker restart: logic still works after the worker is stopped.
+// 9. Leaving a group's pages.
+await check("a group whose last tab navigates away disappears", async () => {
+  await setSync({ enabled: true });
+  await setRules([...RULES, { group: "solo", color: "pink", pattern: "solo.test", subpages: true }]);
+  const id = await open("https://solo.test/1");
+  await until("solo group", async () => ((await groupOf("solo.test/1")) === "solo" ? true : await allTabs()));
+  await ev((id) => chrome.tabs.update(id, { url: "https://elsewhere.test/2" }), id);
+  await until("solo gone", async () => ((await groupCount("solo")) === 0 ? true : await allTabs()));
+});
+await check("groups not in the groups list keep tabs no rule matches", async () => {
+  if ((await groupOf("reading.test/1")) !== "Reading") throw new Error(String(await groupOf("reading.test/1")));
+});
+await check("a tab dragged into a group by hand stays there when it navigates", async () => {
+  const id = await open("https://elsewhere.test/hand");
+  await new Promise((r) => setTimeout(r, 800));
+  const page = await ctx.newPage();
+  await page.goto(`chrome-extension://${extId}/options.html`);
+  await page.evaluate(async (id) => {
+    const g = (await chrome.tabGroups.query({ title: "dev" }))[0];
+    await chrome.tabs.group({ tabIds: [id], groupId: g.id });
+  }, id);
+  await page.close();
+  await new Promise((r) => setTimeout(r, 800));
+  await ev((id) => chrome.tabs.update(id, { url: "https://elsewhere.test/hand2" }), id);
+  await new Promise((r) => setTimeout(r, 1500));
+  const g = (await allTabs()).find((t) => t.id === id).g;
+  if (g !== "dev") throw new Error("moved to " + g);
+});
+await check("'Open' from another machine keeps a hand-placed tab in its group", async () => {
+  const page = await ctx.newPage();
+  await page.goto(`chrome-extension://${extId}/popup.html`);
+  const r = await page.evaluate(() =>
+    chrome.runtime.sendMessage({ type: "restore", urls: ["https://elsewhere.test/from-laptop"], title: "social", color: "blue" }),
+  );
+  await page.close();
+  if (!r?.ok) throw new Error(JSON.stringify(r));
+  await until("in social", async () => ((await groupOf("elsewhere.test/from-laptop")) === "social" ? true : await allTabs()));
+  await new Promise((r) => setTimeout(r, 1500));
+  const g = await groupOf("elsewhere.test/from-laptop");
+  if (g !== "social") throw new Error("taken out: " + g);
+});
+
+// 10. Service worker restart: logic still works after the worker is stopped.
 await check("works after service worker restart", async () => {
   await setSync({ enabled: true });
   const page = await ctx.newPage();
