@@ -1,15 +1,15 @@
 import { groupOrder, isGroupable, matchRule, normTitle, planMerges, planOrder } from "./lib.js";
 import { buildItems, collectGroups, groupPrefix, itemBytes, machineKey, planWrite, readMachines } from "./sync.js";
 
-const DEFAULTS = {
-  rules: [],
-  enabled: true,
-  groupsToTop: true,
-  scope: "window", // "window" | "global"
-};
+import { isSettingsKey, loadSettings } from "./settings.js";
+
+// Settings are read on every flush, so keep them until sync storage says
+// they changed.
+let settingsCache = null;
 
 async function getSettings() {
-  return { ...DEFAULTS, ...(await chrome.storage.sync.get(DEFAULTS)) };
+  settingsCache ??= loadSettings();
+  return settingsCache;
 }
 
 // ---------------------------------------------------------------------------
@@ -123,7 +123,7 @@ async function noteGroupChange(tabId) {
 
 async function placeTab(tab, s, overrides) {
   if (tab.pinned || overrides.has(tab.id)) return;
-  const rule = matchRule(s.rules, tab.url || tab.pendingUrl);
+  const rule = matchRule(s.live, tab.url || tab.pendingUrl);
   if (!rule) return;
   const want = normTitle(rule.group);
 
@@ -166,7 +166,7 @@ async function mergeDuplicates(s) {
 }
 
 async function orderGroups(s) {
-  const rank = groupOrder(s.rules);
+  const rank = groupOrder(s.groups);
   if (!rank.size) return;
   const [groups, windows] = await Promise.all([
     chrome.tabGroups.query({}),
@@ -271,15 +271,31 @@ async function restore({ urls, title, color, windowId }) {
   return ids.length;
 }
 
-// Settings live in sync storage next to every machine's snapshots. Only a
-// settings change should re-sort everything.
-const SNAPSHOT_KEY = /^[mg]:/;
+// A group renamed or recolored in settings: change the open groups to match,
+// so tabs don't get pulled into a new group under the new name.
+async function applyGroupEdits(before = [], after = []) {
+  const old = new Map(before.map((g) => [g.id, g]));
+  const open = await chrome.tabGroups.query({});
+  for (const g of after) {
+    const was = old.get(g.id);
+    if (!was || !normTitle(was.name)) continue;
+    const renamed = normTitle(was.name) !== normTitle(g.name) && normTitle(g.name);
+    const recolored = was.color !== g.color;
+    if (!renamed && !recolored) continue;
+    for (const tg of open.filter((x) => normTitle(x.title) === normTitle(was.name))) {
+      await retry(() => chrome.tabGroups.update(tg.id, { ...(renamed ? { title: g.name } : {}), ...(recolored ? { color: g.color } : {}) }));
+    }
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Events. The original extension only looked at a tab once, when it was
 // created; these cover everything that can change where a tab belongs.
 
-chrome.runtime.onInstalled.addListener(() => schedule("all"));
+chrome.runtime.onInstalled.addListener(({ reason }) => {
+  schedule("all");
+  if (reason === "install") chrome.tabs.create({ url: chrome.runtime.getURL("options.html#setup") });
+}); 
 chrome.runtime.onStartup.addListener(async () => {
   await chrome.storage.session.set({ startedAt: Date.now() });
   schedule("all");
@@ -308,7 +324,16 @@ chrome.windows.onCreated.addListener(() => schedule("all"));
 chrome.tabGroups.onRemoved.addListener(() => scheduleSnapshot());
 
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "sync" && Object.keys(changes).some((k) => !SNAPSHOT_KEY.test(k))) schedule("all");
+  // Settings live in sync storage next to every machine's snapshots. Only a
+  // settings change should re-sort everything.
+  if (area === "sync" && Object.keys(changes).some(isSettingsKey)) {
+    settingsCache = null;
+    const g = changes.groupList;
+    chain = chain
+      .then(() => g && applyGroupEdits(g.oldValue, g.newValue))
+      .catch((e) => console.warn("[tablature]", e));
+    schedule("all");
+  }
   if (area === "local" && ("shareTabs" in changes || "machineName" in changes)) scheduleSnapshot(0);
 });
 
@@ -321,6 +346,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
       (n) => reply({ ok: true, opened: n }),
       (e) => reply({ ok: false, error: String(e?.message ?? e) }),
     );
+    return true;
+  } else if (msg?.type === "machine") {
+    getMachine().then(reply, () => reply(null));
     return true;
   } else if (msg?.type === "snapshotNow") {
     lastSnapAt = 0;

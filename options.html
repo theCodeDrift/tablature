@@ -3,51 +3,105 @@
   <head>
     <meta charset="utf-8" />
     <title>Tablature</title>
-    <style>
-      body { font: 14px system-ui, sans-serif; max-width: 760px; margin: 2rem auto; padding: 0 1rem; }
-      textarea { width: 100%; height: 18rem; font: 13px ui-monospace, monospace; }
-      .row { margin: 0.75rem 0; }
-      #errors { color: #b00; white-space: pre-line; }
-      #status { color: #070; }
-      code { background: #eee; padding: 0 3px; }
-      h2 { font-size: 15px; margin-top: 1.5rem; }
-      @media (prefers-color-scheme: dark) { body { background: #202124; color: #e8eaed; } code { background: #3c4043; } #errors { color: #f28b82; } #status { color: #81c995; } }
-    </style>
+    <link rel="stylesheet" href="options.css" />
   </head>
   <body>
-    <h1>Tablature</h1>
-    <p>
-      One rule per line: <code>group | color | pattern</code>. First match wins, and groups sit at the
-      front of the tab strip in the order they first appear here. Color is optional
-      (grey, blue, red, yellow, green, pink, purple, cyan, orange). Patterns use <code>*</code> as a wildcard.
-    </p>
-    <textarea id="rules" spellcheck="false" placeholder="social | blue | *://*.bsky.app/*
-social | blue | *://x.com/*
-dev | green | *://github.com/*"></textarea>
-    <div id="errors"></div>
+    <header class="top">
+      <img src="icons/icon48.png" alt="" width="28" height="28" />
+      <h1>Tablature</h1>
+      <span id="status" role="status" aria-live="polite"></span>
+    </header>
 
-    <div class="row"><label><input type="checkbox" id="enabled" /> Enabled</label></div>
-    <div class="row"><label><input type="checkbox" id="groupsToTop" /> Keep ruled groups at the front, in rule order</label></div>
-    <div class="row">
-      Merge same-name groups:
-      <label><input type="radio" name="scope" value="window" /> within each window</label>
-      <label><input type="radio" name="scope" value="global" /> across all windows (tabs move between windows)</label>
-    </div>
+    <section id="setup" class="card setup" hidden>
+      <h2>Set up Chrome for Tablature</h2>
+      <ol>
+        <li>
+          <strong>Turn off Chrome's own tab group sync.</strong>
+          Chrome saves every tab group and syncs it to your other computers, which brings back copies of
+          groups Tablature has merged. Tablature shares groups its own way, so Chrome's isn't needed.
+          In sync settings, choose <em>Customize sync</em> and turn off <em>Saved tab groups</em>
+          (called <em>Tab groups</em> in some versions).
+          <div class="actions"><button id="openSync" class="secondary">Open Chrome sync settings</button></div>
+          <p class="note">Chrome doesn't let extensions read this setting, so Tablature can't check it for you.</p>
+        </li>
+        <li>
+          <strong>Clear out old copies.</strong>
+          If saved groups have piled up on your bookmarks bar, right-click each extra one and choose
+          <em>Delete group</em> or <em>Unpin</em>. You only need to do this once.
+        </li>
+        <li>
+          <strong>Add your groups and rules</strong> below. Tabs that are already open are sorted as soon as
+          a rule is added.
+        </li>
+      </ol>
+      <div class="actions"><button id="setupDone">Done</button></div>
+    </section>
 
-    <h2>This machine</h2>
-    <p>
-      Tablature shares each named group's tabs with your other computers through Chrome sync, so the
-      toolbar button can offer to open the ones you don't have here. Nothing opens or closes on its own.
-    </p>
-    <div class="row"><label><input type="checkbox" id="shareTabs" /> Share this machine's groups</label></div>
-    <div class="row"><label>Name shown on other machines: <input type="text" id="machineName" maxlength="40" /></label></div>
+    <section class="card">
+      <div class="section-head">
+        <h2>Tab groups</h2>
+        <button id="addGroup" class="add">+ Add group</button>
+      </div>
+      <p class="help">Groups sit at the front of the tab strip in this order. Drag to reorder.</p>
+      <ul id="groups" class="list"></ul>
+      <p id="groupsEmpty" class="empty" hidden>No groups yet. Add one, then add rules that send tabs to it.</p>
+    </section>
 
-    <div class="row">
-      <button id="save">Save</button>
-      <button id="sweep">Sort all tabs now</button>
-      <button id="clear">Forget manual moves</button>
-      <span id="status"></span>
-    </div>
+    <section class="card">
+      <div class="section-head">
+        <h2>Rules</h2>
+        <button id="addRule" class="add">+ Add rule</button>
+      </div>
+      <p class="help">The first rule that matches a tab decides its group. Drag to reorder.</p>
+      <ul id="rules" class="list"></ul>
+      <p id="rulesEmpty" class="empty" hidden></p>
+
+      <details class="patterns">
+        <summary>How patterns work</summary>
+        <table>
+          <tr><td><code>github.com</code></td><td>github.com and www.github.com, any protocol. With <em>subpages</em>, every page on them.</td></tr>
+          <tr><td><code>github.com/jakobo</code></td><td>That page. With <em>subpages</em>, also github.com/jakobo/anything, never github.com/jakobonew.</td></tr>
+          <tr><td><code>www.github.com</code></td><td>Only the www address.</td></tr>
+          <tr><td><code>*.bsky.app</code></td><td>bsky.app and every subdomain, like staging.bsky.app.</td></tr>
+          <tr><td><code>https://x.com</code></td><td>Only https.</td></tr>
+          <tr><td><code>x.com/*/status</code></td><td><code>*</code> matches anything, including <code>/</code>.</td></tr>
+        </table>
+        <p class="help">The part after <code>?</code> or <code>#</code> in a tab's address is ignored.</p>
+      </details>
+
+      <div class="tester">
+        <label for="testUrl">Test an address</label>
+        <input id="testUrl" type="url" placeholder="https://github.com/jakobo/tablature" spellcheck="false" />
+        <div id="testResult" class="help"></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Behavior</h2>
+      <label class="row"><input type="checkbox" id="enabled" /> Group tabs automatically</label>
+      <label class="row"><input type="checkbox" id="groupsToTop" /> Keep groups at the front of the tab strip, in the order above</label>
+      <fieldset class="choices">
+        <legend>Merge same-name groups</legend>
+        <label><input type="radio" name="scope" value="window" /> Within each window</label>
+        <label><input type="radio" name="scope" value="global" /> Across all windows (tabs move between windows)</label>
+      </fieldset>
+      <div class="actions">
+        <button id="sweep" class="secondary">Sort all tabs now</button>
+        <button id="clear" class="secondary">Forget manual moves</button>
+      </div>
+      <p class="help">A tab you drag out of its group by hand stays where you put it until it closes, or until you forget manual moves.</p>
+    </section>
+
+    <section class="card">
+      <h2>This machine</h2>
+      <p class="help">
+        Tablature shares each named group's tabs with your other computers through Chrome sync. The toolbar
+        button offers to open the ones you don't have here. Nothing opens or closes on its own.
+      </p>
+      <label class="row"><input type="checkbox" id="shareTabs" /> Share this machine's groups</label>
+      <label class="row">Name shown on other machines <input type="text" id="machineName" maxlength="40" /></label>
+      <p class="help"><button id="showSetup" class="link">Show setup steps again</button></p>
+    </section>
 
     <script type="module" src="options.js"></script>
   </body>
