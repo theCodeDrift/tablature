@@ -8,6 +8,7 @@ Tablature is a Chrome extension that puts tabs into groups by URL rule and treat
 - **Patterns.** Written the way you'd say them. No protocol means any protocol. A bare domain like `github.com` matches both `github.com` and `www.github.com`; `www.github.com` matches only www; `*.bsky.app` matches bsky.app and every subdomain. The *subpages* switch also matches everything below the path (`github.com/jakobo` → `github.com/jakobo/tablature`, never `github.com/jakobonew`). `*` matches anything. The query string and `#fragment` are ignored. Rules from 0.1 and 0.2 are migrated automatically.
 - **Setup.** Installing opens the settings page at a short setup guide: turn off Chrome's own tab group sync (with a button to its settings page), clear old saved copies, add groups. Chrome doesn't let extensions read its sync settings, so Tablature can't check this for you.
 - **Already-open tabs.** On install, on browser start, on any new window and on every rule change, it sorts every tab, not only new ones.
+- **Tabs leave groups too.** A tab in one of your groups that moves to a page no rule sends there (another GitHub repo, say) is taken out of the group, and a group that empties disappears. If a rule sends it to a different group, it moves there instead. Groups you made yourself, tabs you dragged in by hand, and new-tab or `chrome://` pages are left alone.
 - **One group per name.** Same-name groups (case and whitespace ignored) are merged automatically, within each window by default or across all windows if you pick that. An emptied group disappears on its own; Chrome has no delete call for groups.
 - **Groups at the front.** Ruled groups sit right after pinned tabs, in the order they first appear in the rules.
 - **More events.** New tabs, URL changes (including single-page-app navigation), tabs dragged between windows, prerender tab swaps, new windows, and groups that get their title late after a session restore.
@@ -55,7 +56,7 @@ npm run package   # dist/tablature-<version>.zip, needs python3
 node --test
 ```
 
-Covers the pure logic in `lib.js` and `sync.js` (pattern matching, migration, storage chunking, merge and order planning, snapshots).
+Covers the pure logic in `lib.js` and `sync.js` (pattern matching, placement, migration, storage chunking, merge and order planning, snapshots).
 
 ```
 npm install

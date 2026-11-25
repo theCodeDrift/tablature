@@ -96,6 +96,22 @@ export function matchRule(rules, url) {
   return null;
 }
 
+// Where a tab belongs. currentTitle is the title of the group it is in, or
+// null if it is in none. Returns a rule (move it into that rule's group),
+// "ungroup" (it sits in a group from the groups list but no rule sends it
+// there any more, e.g. after navigating away), or null (leave it).
+// Groups that aren't in the list were made by hand and are never emptied.
+export function placement(rules, groups, url, currentTitle) {
+  const rule = matchRule(rules, url);
+  if (currentTitle === null) return rule;
+  const cur = normTitle(currentTitle);
+  if (!cur) return null; // untitled: probably mid-restore, wait for the title
+  if (rule) return normTitle(rule.group) === cur ? null : rule;
+  // New-tab and chrome:// pages, and tabs that haven't loaded yet, stay put.
+  if (!isGroupable(url)) return null;
+  return groupOrder(groups).has(cur) ? "ungroup" : null;
+}
+
 // Group names in order, deduplicated: the order groups are sorted into at the
 // front of the tab strip. Takes [{ name }] (or resolved rules, by .group).
 export function groupOrder(list) {
