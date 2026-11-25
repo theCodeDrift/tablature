@@ -8,8 +8,8 @@ import { fileURLToPath } from "node:url";
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const { version } = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
 const files = [
-  "manifest.json", "background.js", "lib.js", "sync.js",
-  "options.html", "options.js", "popup.html", "popup.css", "popup.js",
+  "manifest.json", "background.js", "lib.js", "sync.js", "settings.js",
+  "options.html", "options.css", "options.js", "popup.html", "popup.css", "popup.js",
   "icons/icon16.png", "icons/icon32.png", "icons/icon48.png", "icons/icon128.png",
   "README.md",
 ];

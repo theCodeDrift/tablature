@@ -4,7 +4,9 @@ Tablature is a Chrome extension that puts tabs into groups by URL rule and treat
 
 ## What it does
 
-- **Rules.** `group | color | pattern`, first match wins, `*` wildcards. Rules live in `chrome.storage.sync`, so every machine signed into Chrome gets the same group names.
+- **Groups and rules.** The settings page has two lists. *Tab groups* holds each group's name and color, in the order they sit at the front of the tab strip. *Rules* send matching tabs to a group; the first rule that matches wins. Add, delete, switch off, and drag either list to reorder (arrow keys on the handle work too). Changes save as you go, and a "Test an address" box shows which rule a URL would hit. Renaming or recoloring a group changes the open group to match. Everything lives in `chrome.storage.sync`, so every machine signed into Chrome gets the same groups and rules.
+- **Patterns.** Written the way you'd say them. No protocol means any protocol. A bare domain like `github.com` matches both `github.com` and `www.github.com`; `www.github.com` matches only www; `*.bsky.app` matches bsky.app and every subdomain. The *subpages* switch also matches everything below the path (`github.com/jakobo` → `github.com/jakobo/tablature`, never `github.com/jakobonew`). `*` matches anything. The query string and `#fragment` are ignored. Rules from 0.1 and 0.2 are migrated automatically.
+- **Setup.** Installing opens the settings page at a short setup guide: turn off Chrome's own tab group sync (with a button to its settings page), clear old saved copies, add groups. Chrome doesn't let extensions read its sync settings, so Tablature can't check this for you.
 - **Already-open tabs.** On install, on browser start, on any new window and on every rule change, it sorts every tab, not only new ones.
 - **One group per name.** Same-name groups (case and whitespace ignored) are merged automatically, within each window by default or across all windows if you pick that. An emptied group disappears on its own; Chrome has no delete call for groups.
 - **Groups at the front.** Ruled groups sit right after pinned tabs, in the order they first appear in the rules.
@@ -14,8 +16,9 @@ Tablature is a Chrome extension that puts tabs into groups by URL rule and treat
 
 ### How sharing is stored
 
-Each machine writes only its own keys, so machines never overwrite each other:
+Settings are shared by every machine. For groups' tabs, each machine writes only its own keys, so machines never overwrite each other:
 
+- `groupList`: `[{ id, name, color }]`; `rules.n` and `rules.0`, `rules.1` ...: `[{ id, pattern, group, subpages, enabled }]` in chunks under the 8 KB item limit
 - `m:<machineId>`: `{ name, at }`
 - `g:<machineId>:<group name>`: `{ title, color, tabs: [{ u, t }], more, at }`
 
@@ -34,7 +37,7 @@ Chrome saves and pins every new group by itself, and an extension can't see or d
 1. Download `tablature-<version>.zip` from the [releases](https://github.com/theCodeDrift/tablature/releases) and unzip it, or use a checkout of this repo.
 2. Open `chrome://extensions` and turn on Developer mode.
 3. Click **Load unpacked** and pick the unzipped folder.
-4. Pin Tablature to the toolbar. Its popup shows other machines' groups; **Settings** there opens the rules.
+4. The settings page opens with setup steps. Pin Tablature to the toolbar: its popup shows other machines' groups, and **Settings** there opens the groups and rules.
 
 The manifest carries a `key`, so the extension ID is `efjdfbahfkmmadlabjpogbmecbidgbmo` wherever it is loaded from. Chrome sync storage is per extension ID, so this is what lets two machines share rules and groups. To test sharing, install it on two computers signed into the same Chrome profile with sync on.
 
@@ -52,7 +55,7 @@ npm run package   # dist/tablature-<version>.zip, needs python3
 node --test
 ```
 
-Covers the pure logic in `lib.js` (matching, rule parsing, merge and order planning).
+Covers the pure logic in `lib.js` and `sync.js` (pattern matching, migration, storage chunking, merge and order planning, snapshots).
 
 ```
 npm install
@@ -60,7 +63,7 @@ npx playwright install chromium   # once
 npm run test:browser
 ```
 
-Loads the extension unpacked in Playwright's Chromium and checks the `chrome.*` side: sorting already-open tabs on rule change, new tabs, navigation (including single-page-app `pushState`), same-name merges, group order after pinned tabs, manual moves sticking and "Forget manual moves", the options page, window vs. global scope, the enabled switch, and a service worker restart. Every http(s) request is answered locally, so it needs no network. Set `CHROME=/path/to/chrome` to use another Chromium build.
+Loads the extension unpacked in Playwright's Chromium and drives it: sorting already-open tabs, new tabs, navigation (including single-page-app `pushState`), same-name merges, group order, manual moves, the settings page (adding, dragging, renaming, deleting groups and rules, setup steps), sharing between machines and the popup, window vs. global scope, and a service worker restart. Every http(s) request is answered locally, so it needs no network. Set `CHROME=/path/to/chrome` to use another Chromium build.
 
 ## Not yet
 

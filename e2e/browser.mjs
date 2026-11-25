@@ -77,6 +77,28 @@ const groupCount = (title, windowId) =>
   );
 const open = async (url, extra = {}) => ev(async ([url, extra]) => (await chrome.tabs.create({ url, ...extra })).id, [url, extra]);
 const setSync = (obj) => ev((o) => chrome.storage.sync.set(o), obj);
+// Writes groups and rules in the current format, from flat { group, color, pattern, subpages }.
+const setRules = (list) =>
+  ev(async (list) => {
+    const groups = [];
+    const byName = new Map();
+    const rules = [];
+    for (const r of list) {
+      if (!byName.has(r.group)) {
+        const g = { id: `g_${r.group}`, name: r.group, color: r.color || "grey" };
+        byName.set(r.group, g);
+        groups.push(g);
+      }
+      rules.push({ id: `r${rules.length}`, pattern: r.pattern, group: byName.get(r.group).id, subpages: !!r.subpages, enabled: true });
+    }
+    await chrome.storage.sync.set({ groupList: groups, "rules.n": 1, "rules.0": rules });
+  }, list);
+const sweep = async () => {
+  const p = await ctx.newPage();
+  await p.goto(`chrome-extension://${extId}/popup.html`);
+  await p.evaluate(() => chrome.runtime.sendMessage({ type: "sweep" }));
+  await p.close();
+};
 
 const RULES = [
   { group: "social", color: "blue", pattern: "*://*.bsky.app/*" },
@@ -86,6 +108,12 @@ const RULES = [
 
 await check("extension ID is pinned by the manifest key, so sync works across machines", async () => {
   if (extId !== "efjdfbahfkmmadlabjpogbmecbidgbmo") throw new Error(extId);
+});
+
+await check("installing opens the settings page at the setup steps", async () => {
+  await until("setup tab", async () =>
+    (await ev(async (id) => (await chrome.tabs.query({})).some((t) => (t.url || t.pendingUrl) === `chrome-extension://${id}/options.html#setup`), extId)) || "no tab",
+  );
 });
 
 // 1. Tabs open before rules exist get sorted when rules are saved.
@@ -98,7 +126,14 @@ await check("no rules: nothing grouped", async () => {
   const t = await allTabs();
   if (t.some((x) => x.g)) throw new Error(JSON.stringify(t));
 });
-await setSync({ rules: RULES });
+await setSync({ rules: RULES }); // 0.2's flat format, migrated on read
+await check("rules from 0.2 are migrated to groups and rules", async () => {
+  await until("migrated", async () => {
+    const all = await ev(() => chrome.storage.sync.get(null));
+    const names = (all.groupList ?? []).map((g) => g.name);
+    return !("rules" in all) && names.join() === "social,dev" && all["rules.0"]?.length === 3 ? true : all;
+  });
+});
 await check("rule save sorts already-open tabs", async () => {
   await until("github→dev, www.bsky→social", async () =>
     (await groupOf("github.com/a")) === "dev" && (await groupOf("www.bsky.app/c")) === "social" ? true : await allTabs(),
@@ -117,7 +152,7 @@ await check("new tab joins existing group (no second group)", async () => {
   if ((await groupCount("social")) !== 1) throw new Error("count " + (await groupCount("social")));
 });
 await check("navigating an ungrouped tab regroups it", async () => {
-  const id = (await allTabs()).find((t) => t.url.includes("example.com")).id;
+  const id = (await allTabs()).find((t) => t.url?.includes("example.com")).id;
   await ev((id) => chrome.tabs.update(id, { url: "https://github.com/nav" }), id);
   await until("nav→dev", async () => ((await groupOf("github.com/nav")) === "dev" ? true : await allTabs()));
 });
@@ -126,7 +161,7 @@ await check("SPA pushState navigation regroups", async () => {
   await page.goto("https://example.org/start");
   await new Promise((r) => setTimeout(r, 600));
   // pushState can only change path on same origin, so use a rule on a path
-  await setSync({ rules: [...RULES, { group: "docs", color: "", pattern: "*://example.org/docs/*" }] });
+  await setRules([...RULES, { group: "docs", color: "", pattern: "*://example.org/docs/*" }]);
   await new Promise((r) => setTimeout(r, 600));
   if ((await groupOf("example.org/start")) !== null) throw new Error("grouped too early");
   await page.evaluate(() => history.pushState({}, "", "/docs/x"));
@@ -145,14 +180,14 @@ await check("same-name groups merge (case/space-insensitive)", async () => {
   }, [a, b]);
   await until("one social group", async () => ((await groupCount("social")) === 1 ? true : await allTabs()));
   const t = await allTabs();
-  const sid = t.find((x) => x.url.includes("x.com")).gid;
-  if (!t.filter((x) => x.url.includes("example.net")).every((x) => x.gid === sid)) throw new Error(JSON.stringify(t));
+  const sid = t.find((x) => x.url?.includes("x.com")).gid;
+  if (!t.filter((x) => x.url?.includes("example.net")).every((x) => x.gid === sid)) throw new Error(JSON.stringify(t));
 });
 
 // 4. Order: ruled groups right after pinned tabs, in rule order.
 await check("ruled groups sit after pinned tabs, in rule order", async () => {
   await open("https://pinned.test/", { pinned: true });
-  await setSync({ rules: [...RULES, { group: "docs", color: "", pattern: "*://example.org/docs/*" }], groupsToTop: true, _bump: Date.now() });
+  await sweep();
   await until("order", async () => {
     const t = (await snap())[0];
     const seq = [];
@@ -164,7 +199,7 @@ await check("ruled groups sit after pinned tabs, in rule order", async () => {
 
 // 5. Manual moves stick.
 await check("tab dragged out of its group by hand stays out", async () => {
-  const id = (await allTabs()).find((t) => t.url.includes("github.com/a")).id;
+  const id = (await allTabs()).find((t) => t.url?.includes("github.com/a")).id;
   // Simulate the user: ungroup from a page context (not the extension's own move).
   const page = await ctx.newPage();
   await page.goto(`chrome-extension://${extId}/options.html`);
@@ -193,25 +228,142 @@ await check("'Forget manual moves' puts it back", async () => {
 });
 
 // 6. Options page UI.
-await check("options page loads, saves rules, shows parse errors", async () => {
+const optionsPage = async () => {
   const page = await ctx.newPage();
-  const errs = [];
-  page.on("pageerror", (e) => errs.push(e.message));
+  page.errs = [];
+  page.on("pageerror", (e) => page.errs.push(e.message));
+  page.on("dialog", (d) => d.accept());
   await page.goto(`chrome-extension://${extId}/options.html`);
+  await page.waitForSelector("#groups li");
+  return page;
+};
+// The row in a list whose input currently holds `value` (a property, not an attribute).
+const rowWith = async (page, list, input, value) => {
+  const i = await page.$$eval(`${list} li ${input}`, (els, v) => els.findIndex((e) => e.value === v), value);
+  if (i < 0) throw new Error(`no row with ${value}`);
+  return page.locator(`${list} li`).nth(i);
+};
+const stored = () => ev(async () => {
+  const all = await chrome.storage.sync.get(null);
+  return { groups: all.groupList, rules: Array.from({ length: all["rules.n"] }, (_, i) => all[`rules.${i}`]).flat() };
+});
+
+await check("options page lists groups and rules, and setup steps until dismissed", async () => {
+  const page = await optionsPage();
   if ((await page.title()) !== "Tablature") throw new Error("title " + (await page.title()));
-  await page.waitForFunction(() => document.getElementById("rules").value.includes("github"));
-  await page.fill("#rules", "bad line");
-  await page.click("#save");
-  const e = await page.textContent("#errors");
-  if (!e.includes("Line 1")) throw new Error("no error shown: " + e);
-  await page.fill("#rules", "news | red | *://news.test/*\nsocial | blue | *://x.com/*");
-  await page.click("#save");
-  await page.waitForFunction(() => document.getElementById("status").textContent === "Saved");
-  const rules = await ev(async () => (await chrome.storage.sync.get("rules")).rules);
-  if (rules.length !== 2 || rules[0].group !== "news") throw new Error(JSON.stringify(rules));
+  const groups = await page.$$eval("#groups .name", (els) => els.map((e) => e.value));
+  if (groups.join() !== "social,dev,docs") throw new Error(groups.join());
+  const patterns = await page.$$eval("#rules .pattern", (els) => els.map((e) => e.value));
+  if (patterns.length !== 4 || patterns[3] !== "*://example.org/docs/*") throw new Error(patterns.join());
+  if (await page.isHidden("#setup")) throw new Error("setup steps hidden on first visit");
+  await page.click("#openSync");
+  await until("sync settings tab", async () =>
+    (await ev(async () => (await chrome.tabs.query({})).some((t) => (t.url || t.pendingUrl || "").startsWith("chrome://settings/syncSetup")))) || "no tab",
+  );
+  await page.click("#setupDone");
+  await page.reload();
+  await page.waitForSelector("#groups li");
+  if (!(await page.isHidden("#setup"))) throw new Error("setup steps still shown after Done");
+  if (page.errs.length) throw new Error(page.errs.join(";"));
+  await page.close();
+});
+
+await check("add a group and a rule without typing rules text; tabs follow", async () => {
+  const page = await optionsPage();
+  await page.click("#addGroup");
+  await page.fill("#groups li:last-child .name", "news");
+  await page.press("#groups li:last-child .name", "Tab");
+  await page.click("#groups li:last-child .swatch");
+  await page.click('#groups li:last-child .palette button[aria-label="red"]');
+  await page.click("#addRule");
+  const row = "#rules li:last-child";
+  await page.fill(`${row} .pattern`, "news .test");
+  if (!(await page.textContent(`${row} .error`)).includes("space")) throw new Error("no error for a space");
+  await page.fill(`${row} .pattern`, "news.test");
+  if (!(await page.isChecked(`${row} .sub input`))) throw new Error("subpages should default on");
+  await page.selectOption(`${row} select`, { label: "news" });
+  await page.fill("#testUrl", "news.test/some/story");
+  const result = await page.textContent("#testResult");
+  if (!result.includes("news") || !result.includes("rule 5")) throw new Error("tester: " + result);
+  await until("saved", async () => {
+    const { groups, rules } = await stored();
+    const news = groups.find((g) => g.name === "news");
+    return news?.color === "red" && rules.some((r) => r.pattern === "news.test" && r.group === news.id && r.subpages) ? true : { groups, rules };
+  });
   await open("https://news.test/1");
   await until("news group", async () => ((await groupOf("news.test/1")) === "news" ? true : await allTabs()));
-  if (errs.length) throw new Error(errs.join(";"));
+  const c = await ev(async () => (await chrome.tabGroups.query({ title: "news" }))[0]?.color);
+  if (c !== "red") throw new Error("color " + c);
+  if (page.errs.length) throw new Error(page.errs.join(";"));
+  await page.close();
+});
+
+await check("drag a group to the top: saved, and the tab strip follows", async () => {
+  const page = await optionsPage();
+  await page.dragAndDrop("#groups li:last-child .handle", "#groups li:first-child", { targetPosition: { x: 40, y: 3 } });
+  await until("order saved", async () => {
+    const names = (await stored()).groups.map((g) => g.name).join();
+    return names === "news,social,dev,docs" ? true : names;
+  });
+  await until("strip order", async () => {
+    const t = (await snap())[0].filter((x) => !x.pinned && x.g);
+    return t[0]?.g === "news" ? true : t.map((x) => x.g);
+  });
+  await page.close();
+});
+
+await check("drag a rule: first match wins in the new order", async () => {
+  await setRules([
+    { group: "news", color: "red", pattern: "news.test", subpages: true },
+    { group: "social", color: "blue", pattern: "x.com", subpages: true },
+    { group: "social", color: "blue", pattern: "bsky.app", subpages: true },
+    { group: "dev", color: "green", pattern: "github.com", subpages: true },
+    { group: "docs", color: "grey", pattern: "example.org/docs", subpages: true },
+    { group: "dev", color: "green", pattern: "x.com/dev", subpages: true },
+  ]);
+  const page = await optionsPage();
+  await page.fill("#testUrl", "https://x.com/dev/1");
+  if (!(await page.textContent("#testResult")).includes("social")) throw new Error(await page.textContent("#testResult"));
+  await page.dragAndDrop("#rules li:last-child .handle", "#rules li:first-child", { targetPosition: { x: 40, y: 3 } });
+  await page.waitForFunction(() => document.getElementById("testResult").textContent.includes("dev"));
+  await until("rule order saved", async () => ((await stored()).rules[0].pattern === "x.com/dev" ? true : (await stored()).rules.map((r) => r.pattern)));
+  await page.close();
+});
+
+await check("renaming or recoloring a group changes the open group, without a second one", async () => {
+  const page = await optionsPage();
+  const docs = await rowWith(page, "#groups", ".name", "docs");
+  await docs.locator(".name").fill("reference");
+  await docs.locator(".name").press("Tab");
+  await docs.locator(".swatch").click();
+  await docs.locator('.palette button[aria-label="cyan"]').click();
+  await until("renamed", async () => ((await groupOf("example.org/docs/x")) === "reference" ? true : await allTabs()));
+  const gs = await ev(() => chrome.tabGroups.query({}));
+  if (gs.some((g) => g.title === "docs")) throw new Error("old group left behind");
+  if (gs.find((g) => g.title === "reference")?.color !== "cyan") throw new Error("color not applied");
+  await page.close();
+});
+
+await check("rule switch off, delete rule, delete group with its rules", async () => {
+  const page = await optionsPage();
+  const ruleRow = await rowWith(page, "#rules", ".pattern", "x.com/dev");
+  await ruleRow.locator(".switch input").uncheck();
+  await until("rule off", async () => ((await stored()).rules.find((r) => r.pattern === "x.com/dev")?.enabled === false ? true : false));
+  await ruleRow.locator(".remove").click();
+  const ref = await rowWith(page, "#groups", ".name", "reference");
+  await ref.locator(".remove").click(); // confirm() accepted
+  await until("deleted", async () => {
+    const { groups, rules } = await stored();
+    return !groups.some((g) => g.name === "reference") && !rules.some((r) => r.pattern === "x.com/dev" || r.pattern === "example.org/docs") ? true : { groups, rules };
+  });
+  if (page.errs.length) throw new Error(page.errs.join(";"));
+  if (process.env.SCREENSHOTS) {
+    await page.setViewportSize({ width: 820, height: 900 });
+    await page.click("#showSetup");
+    await page.fill("#testUrl", "github.com/jakobo/tablature");
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({ path: path.join(process.env.SCREENSHOTS, "options.png"), fullPage: true });
+  }
   await page.close();
 });
 
@@ -280,7 +432,7 @@ await check("'Open' brings them into a same-name group here, not marked as manua
   await page.waitForFunction(() => document.body.textContent.includes("Everything in its groups is open here."));
   const color = await ev(async () => (await chrome.tabGroups.query({ title: "Reading" }))[0]?.color);
   if (color !== "purple") throw new Error("color " + color);
-  const ids = (await allTabs()).filter((t) => t.url.includes("reading.test")).map((t) => t.id);
+  const ids = (await allTabs()).filter((t) => t.url?.includes("reading.test")).map((t) => t.id);
   const { overrides = [] } = await ev(() => chrome.storage.session.get("overrides"));
   if (ids.some((id) => overrides.includes(id))) throw new Error("restored tabs flagged as manual moves");
   await page.close();
